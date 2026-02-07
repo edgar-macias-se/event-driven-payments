@@ -76,6 +76,29 @@ services:
         condition: service_healthy
     networks:
       - payments-network
+  relay:
+    build:
+      context: ./relay
+      dockerfile: Dockerfile
+    container_name: payments-relay
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: payments_user
+      DB_PASSWORD: payments_pass
+      DB_DATABASE: payments_db
+      KAFKA_BROKERS: kafka:9092
+      RELAY_POLLING_INTERVAL_MS: 500
+      RELAY_BATCH_SIZE: 50
+      RELAY_MAX_RETRIES: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - payments-network
+    restart: unless-stopped
 
 # ════════════════════════════════════════════════════════════════
 # Volumes (persistencia de datos)

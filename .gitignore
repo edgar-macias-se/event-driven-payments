@@ -54,3 +54,17 @@ pids
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+#binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+#Test binaries
+*.test
+
+#go workspace file
+go.work
