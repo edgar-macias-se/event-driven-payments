@@ -443,27 +443,6 @@ This project demonstrates:
 
 ---
 
-## 🤝 Interview Talking Points
-
-**When presenting this project:**
-
-1. **"Why Unit of Work instead of passing transactionManager?"**
-
-   > "I chose Unit of Work to keep the Application Layer independent of TypeORM. Using AsyncLocalStorage adds complexity, but it means I can swap to Prisma without touching any use cases. This follows the Dependency Inversion Principle strictly."
-
-2. **"Why Transactional Outbox instead of publishing directly to Kafka?"**
-
-   > "Outbox Pattern guarantees exactly-once delivery semantics without distributed transactions. If Kafka is down, the payment still succeeds, and the event publishes later. This is critical for financial systems where data consistency matters more than real-time delivery."
-
-3. **"Why separate Domain entities from TypeORM schemas?"**
-
-   > "It's about maintainability. My domain logic doesn't care about ORM decorators. If I switch from TypeORM to Prisma, I only modify the infrastructure layer. The domain remains pure TypeScript with zero framework dependencies."
-
-4. **"How does this scale?"**
-   > "The Relay can run multiple instances (horizontal scaling). Each instance polls different partition ranges. The outbox table is partitioned by date, so old events can be dropped instantly. Kafka handles message ordering per partition using the userId as the key."
-
----
-
 ## 📞 Contact
 
 **Developer:** Edgar (Homz) Macias  
