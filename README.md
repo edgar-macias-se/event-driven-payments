@@ -17,8 +17,7 @@ This project serves as a **technical showcase for senior software engineering in
 - **Type-safe development** with TypeScript strict mode
 - **Domain-Driven Design** with pure domain entities
 - **Dependency Inversion Principle** with ports and adapters
-
-**Target companies:** LotusFlare, enterprise software companies requiring microservices expertise.
+  :w
 
 ---
 
@@ -212,7 +211,7 @@ docker --version # 28.x
 
 ```bash
 # Clone repository
-git clone <repo-url>
+git clone https://github.com/edgar-macias-se/event-driven-payments.git
 cd payments-service
 
 # Install dependencies
