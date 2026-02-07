@@ -1,0 +1,93 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: payments-postgres
+    environment:
+      POSTGRES_DB: payments_db
+      POSTGRES_USER: payments_user
+      POSTGRES_PASSWORD: payments_pass
+      POSTGRES_INITDB_ARGS: '-E UTF8 --locale=en_US.utf8'
+    ports:
+      - '6543:5432'
+    volumes:
+      - postgres_data:/varlib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U payments_user -d payments_db']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - payments-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.3
+    container_name: payments_kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker, controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      #LISTENERS
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092, CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # ──────────────────────────────────────────────────────────
+      # Storage
+      # ──────────────────────────────────────────────────────────
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: '0EeQbgdSQ9ipSn5X0Iqtlg'
+
+      # ──────────────────────────────────────────────────────────
+      # Performance tuning (para desarrollo local)
+      # ──────────────────────────────────────────────────────────
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    ports:
+      - '9092:9092'
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'kafka-broker-api-versions --bootstrap-server localhost:9092',
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks:
+      - payments-network
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: payments-kafka-ui
+    environment:
+      KAFKA_CLUSTERS_0_NAME: payments-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    ports:
+      - '8080:8080'
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - payments-network
+
+# ════════════════════════════════════════════════════════════════
+# Volumes (persistencia de datos)
+# Sin estos, los datos se pierden al hacer docker-compose down
+# ════════════════════════════════════════════════════════════════
+volumes:
+  postgres_data:
+  kafka_data:
+
+# ════════════════════════════════════════════════════════════════
+# Network (red interna para que los servicios se comuniquen)
+# ════════════════════════════════════════════════════════════════
+networks:
+  payments-network:
+    driver: bridge
