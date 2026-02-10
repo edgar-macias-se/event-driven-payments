@@ -1,5 +1,6 @@
+import { TelemetryConfig } from './common/telemetry/telemetry.config';
+TelemetryConfig.initialize();
 import 'module-alias/register';
-
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { Logger, ValidationPipe } from '@nestjs/common';

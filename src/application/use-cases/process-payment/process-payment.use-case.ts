@@ -18,6 +18,8 @@ import { OUTBOX_REPOSITORY } from '../../../domain/ports/outbox.repository.inter
 import { ProcessPaymentDto } from './process-payment.dto';
 import { ProcessPaymentResult } from './process-payment.result';
 
+import { trace, SpanStatusCode } from '@opentelemetry/api';
+import { MetricsService } from '../../../common/telemetry/metrics.service';
 /**
  * ProcessPaymentUseCase - Procesar un pago con Transactional Outbox Pattern
  *
@@ -48,6 +50,8 @@ export class ProcessPaymentUseCase {
 
     @Inject(OUTBOX_REPOSITORY)
     private readonly outboxRepository: IOutboxRepository,
+
+    private readonly metricsService: MetricsService,
   ) {}
 
   /**
@@ -57,82 +61,114 @@ export class ProcessPaymentUseCase {
    * @returns ProcessPaymentResult con paymentId y status
    */
   async execute(dto: ProcessPaymentDto): Promise<ProcessPaymentResult> {
+    const tracer = trace.getTracer('payment-api');
+    const span = tracer.startSpan('ProcessPaymentUseCase.execute');
+
+    span.setAttribute('user.id', dto.userId);
+    span.setAttribute('payment.amount', dto.amount);
+    span.setAttribute('payment.currency', dto.currency);
+
+    const startTime = Date.now();
+
     this.logger.log(
       `Processing payment for user ${dto!.userId}, amount: ${dto!.amount} ${dto!.currency}`,
     );
+    try {
+      // ════════════════════════════════════════════════════════════════
+      // PASO 1: Generar IDs únicos
+      // ════════════════════════════════════════════════════════════════
+      const paymentId = randomUUID();
+      const eventId = randomUUID();
 
-    // ════════════════════════════════════════════════════════════════
-    // PASO 1: Generar IDs únicos
-    // ════════════════════════════════════════════════════════════════
-    const paymentId = randomUUID();
-    const eventId = randomUUID();
+      // ════════════════════════════════════════════════════════════════
+      // PASO 2: Ejecutar dentro de Unit of Work (transacción atómica)
+      // ════════════════════════════════════════════════════════════════
+      const result = await this.unitOfWork.execute(async () => {
+        // ──────────────────────────────────────────────────────────────
+        // 2.1. Crear Payment entity
+        // ──────────────────────────────────────────────────────────────
+        const payment = new Payment({
+          id: paymentId,
+          userId: dto.userId,
+          amount: dto.amount,
+          currency: dto.currency.toUpperCase(), // Normalizar a mayúsculas
+          status: PaymentStatus.PENDING,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        // Constructor de Payment llama validate() internamente
+        // Si validación falla, lanza Error y hace ROLLBACK
 
-    // ════════════════════════════════════════════════════════════════
-    // PASO 2: Ejecutar dentro de Unit of Work (transacción atómica)
-    // ════════════════════════════════════════════════════════════════
-    const result = await this.unitOfWork.execute(async () => {
-      // ──────────────────────────────────────────────────────────────
-      // 2.1. Crear Payment entity
-      // ──────────────────────────────────────────────────────────────
-      const payment = new Payment({
-        id: paymentId,
-        userId: dto.userId,
-        amount: dto.amount,
-        currency: dto.currency.toUpperCase(), // Normalizar a mayúsculas
-        status: PaymentStatus.PENDING,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        // ──────────────────────────────────────────────────────────────
+        // 2.2. Guardar Payment en DB
+        // ──────────────────────────────────────────────────────────────
+        const savedPayment = await this.paymentRepository.save(payment);
+        // Usa EntityManager del Unit of Work (transacción activa)
+
+        this.logger.debug(`Payment saved: ${savedPayment.id}`);
+
+        // ──────────────────────────────────────────────────────────────
+        // 2.3. Crear OutboxEvent
+        // ──────────────────────────────────────────────────────────────
+        const eventData = this.serializePaymentEvent(savedPayment);
+
+        const outboxEvent = new OutboxEvent({
+          id: eventId,
+          name: 'PaymentCreated',
+          subject: 'payment.paid', // Topic de Kafka
+          data: eventData,
+          publishedAt: null, // Pendiente de publicación
+          createdAt: new Date(),
+        });
+
+        // ──────────────────────────────────────────────────────────────
+        // 2.4. Guardar OutboxEvent en DB
+        // ──────────────────────────────────────────────────────────────
+        await this.outboxRepository.save(outboxEvent);
+        // Usa el MISMO EntityManager (misma transacción)
+
+        this.logger.debug(`Outbox event saved: ${outboxEvent.id}`);
+
+        this.metricsService.recordOutboxEventCreated(outboxEvent.name);
+        // ──────────────────────────────────────────────────────────────
+        // 2.5. Retornar datos para el resultado
+        // ──────────────────────────────────────────────────────────────
+        return {
+          paymentId: savedPayment.id,
+          status: savedPayment.status,
+        };
       });
-      // Constructor de Payment llama validate() internamente
-      // Si validación falla, lanza Error y hace ROLLBACK
+      // Si llegó aquí sin errores → COMMIT
+      // Si hubo error → ROLLBACK automático
 
-      // ──────────────────────────────────────────────────────────────
-      // 2.2. Guardar Payment en DB
-      // ──────────────────────────────────────────────────────────────
-      const savedPayment = await this.paymentRepository.save(payment);
-      // Usa EntityManager del Unit of Work (transacción activa)
+      const duration = Date.now() - startTime;
 
-      this.logger.debug(`Payment saved: ${savedPayment.id}`);
+      this.metricsService.recordPaymentProcessed('success', dto.currency);
+      this.metricsService.recordPaymentDuration(duration, 'success');
 
-      // ──────────────────────────────────────────────────────────────
-      // 2.3. Crear OutboxEvent
-      // ──────────────────────────────────────────────────────────────
-      const eventData = this.serializePaymentEvent(savedPayment);
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.setAttribute('payment.status', result.status);
+      // ════════════════════════════════════════════════════════════════
+      // PASO 3: Log de éxito y retornar resultado
+      // ════════════════════════════════════════════════════════════════
+      this.logger.log(`Payment processed successfully: ${result.paymentId}`);
 
-      const outboxEvent = new OutboxEvent({
-        id: eventId,
-        name: 'PaymentCreated',
-        subject: 'payment.paid', // Topic de Kafka
-        data: eventData,
-        publishedAt: null, // Pendiente de publicación
-        createdAt: new Date(),
-      });
+      return new ProcessPaymentResult(result.paymentId, result.status);
+    } catch (error) {
+      const duration = Date.now() - startTime;
 
-      // ──────────────────────────────────────────────────────────────
-      // 2.4. Guardar OutboxEvent en DB
-      // ──────────────────────────────────────────────────────────────
-      await this.outboxRepository.save(outboxEvent);
-      // Usa el MISMO EntityManager (misma transacción)
+      this.metricsService.recordPaymentProcessed('failed', dto.currency);
+      this.metricsService.recordPaymentDuration(duration, 'failed');
 
-      this.logger.debug(`Outbox event saved: ${outboxEvent.id}`);
+      span.setStatus({ code: SpanStatusCode.ERROR });
+      span.recordException(error as Error);
 
-      // ──────────────────────────────────────────────────────────────
-      // 2.5. Retornar datos para el resultado
-      // ──────────────────────────────────────────────────────────────
-      return {
-        paymentId: savedPayment.id,
-        status: savedPayment.status,
-      };
-    });
-    // Si llegó aquí sin errores → COMMIT
-    // Si hubo error → ROLLBACK automático
+      this.logger.error(`Payment processing failed: ${error}`);
 
-    // ════════════════════════════════════════════════════════════════
-    // PASO 3: Log de éxito y retornar resultado
-    // ════════════════════════════════════════════════════════════════
-    this.logger.log(`Payment processed successfully: ${result.paymentId}`);
-
-    return new ProcessPaymentResult(result.paymentId, result.status);
+      throw error;
+    } finally {
+      span.end();
+    }
   }
 
   /**

@@ -234,12 +234,19 @@ WHERE published_at IS NULL;
 
 ### **Infrastructure**
 
-| Component        | Technology         | Version |
-| ---------------- | ------------------ | ------- |
-| Message Broker   | Kafka (KRaft)      | 3.6     |
-| Database         | PostgreSQL         | 16      |
-| Containerization | Docker Compose     | 2.x     |
-| Serialization    | Protobuf (planned) | 3.x     |
+| Component               | Technology             | Version |
+| ----------------------- | ---------------------- | ------- |
+| Message Broker          | Kafka (KRaft)          | 3.6     |
+| Database                | PostgreSQL             | 16      |
+| Containerization        | Docker Compose         | 2.x     |
+| **Observability**       |                        |         |
+| Telemetry SDK           | OpenTelemetry          | 1.x     |
+| Metrics Backend         | Prometheus             | 2.48    |
+| Traces Backend          | Jaeger                 | 1.52    |
+| Logs Backend            | Loki                   | 2.9     |
+| Visualization           | Grafana                | 10.2    |
+| Collector               | OTel Collector Contrib | 0.91    |
+| Serialization (planned) | Protobuf               | 3.x     |
 
 ---
 
@@ -400,9 +407,9 @@ ORDER BY created_at DESC LIMIT 1;
 
 ## 📋 Project Status
 
-### ✅ **COMPLETED**
+### ✅ **COMPLETED (Sessions 1-6)**
 
-**Payment Bounded Context (Sessions 1-5)**
+**Payment Bounded Context**
 
 - [x] NestJS project with TypeScript strict mode
 - [x] Environment variable validation
@@ -418,14 +425,39 @@ ORDER BY created_at DESC LIMIT 1;
 - [x] ProcessPayment use case
 - [x] Payment REST controller
 - [x] Dependency injection configuration
-- [x] **Relay Worker (Go)**
-  - [x] Outbox polling with configurable interval
-  - [x] Batch processing (50 events per iteration)
-  - [x] Kafka producer with Sarama
-  - [x] Durability guarantee (RequiredAcks = WaitForAll)
-  - [x] Structured logging with zap
-  - [x] Graceful shutdown with context cancellation
-- [x] **End-to-End validation** (HTTP → DB → Outbox → Relay → Kafka)
+
+**Relay Worker (Go)**
+
+- [x] Outbox polling with configurable interval (500ms)
+- [x] Batch processing (50 events per iteration)
+- [x] Kafka producer with Sarama
+- [x] Durability guarantee (RequiredAcks = WaitForAll)
+- [x] Structured logging with zap
+- [x] Graceful shutdown with context cancellation
+
+**Observability (OpenTelemetry) - Session 6** ✅
+
+- [x] OpenTelemetry Collector configured
+- [x] Prometheus for metrics (time-series DB)
+- [x] Jaeger for distributed tracing
+- [x] Loki for log aggregation
+- [x] Grafana with unified dashboards
+- [x] Payment API instrumented (TypeScript)
+  - [x] Auto-instrumentation (HTTP, TypeORM)
+  - [x] Custom metrics (payments_processed_total, payment_duration_seconds)
+  - [x] Custom spans (ProcessPaymentUseCase)
+  - [x] Export via OTLP protocol
+- [x] Relay Worker instrumented (Go)
+  - [x] Custom metrics (outbox_events_published_total, outbox_pending_events, kafka_publish_duration_seconds)
+  - [x] Custom spans (batch processing, event publishing)
+  - [x] Observable gauges (pending events, oldest event age)
+  - [x] Export via OTLP protocol
+- [x] Grafana Dashboards
+  - [x] Payment Service Overview
+  - [x] Relay Worker Health
+  - [x] System Overview (unified)
+- [x] Trace/Log/Metric correlation via trace_id
+- [x] End-to-End validated ✅
 
 ---
 
@@ -438,6 +470,8 @@ ORDER BY created_at DESC LIMIT 1;
 - [ ] Kafka consumer with KafkaJS
 - [ ] Idempotency with processed_events table
 - [ ] State machine (TRIAL → ACTIVE → SUSPENDED → EXPIRED)
+- [ ] PostgreSQL schema (subscriptions database)
+- [ ] OpenTelemetry instrumentation
 
 ---
 
@@ -475,6 +509,84 @@ ORDER BY created_at DESC LIMIT 1;
 - [ ] GitHub Actions CI/CD pipeline
 
 ---
+
+## 📊 **Observability Stack**
+
+### **Architecture**
+
+```
+Payment API (NestJS) ──┐
+                       ├─→ OpenTelemetry Collector ──┬─→ Prometheus (metrics)
+Relay Worker (Go) ─────┘                            ├─→ Jaeger (traces)
+                                                     └─→ Loki (logs)
+                                                          ↓
+                                                     Grafana (visualization)
+```
+
+### **Access URLs**
+
+- **Grafana:** http://localhost:3001 (admin/admin)
+- **Prometheus:** http://localhost:9090
+- **Jaeger UI:** http://localhost:16686
+- **OTel Collector:** localhost:4317 (gRPC), localhost:4318 (HTTP)
+
+### **Key Metrics**
+
+**Payment API:**
+
+- `payments_processed_total` - Counter of payments by status/currency
+- `payment_transaction_duration_seconds` - Histogram of transaction latency
+- `outbox_events_created_total` - Counter of outbox events
+
+**Relay Worker:**
+
+- `outbox_events_published_total` - Counter of events published by topic/status
+- `outbox_pending_events` - Gauge of unpublished events
+- `outbox_oldest_event_age_seconds` - Gauge of oldest unpublished event age
+- `relay_batch_duration_seconds` - Histogram of batch processing time
+- `kafka_publish_duration_seconds` - Histogram of Kafka publish latency
+
+### **Dashboards**
+
+1. **Payment Service Overview**
+   - Payments per minute
+   - Success rate (%)
+   - P99 latency
+   - Outbox events created
+
+2. **Relay Worker Health**
+   - Events published per minute
+   - Pending events (gauge)
+   - Oldest event age
+   - Kafka publish latency (p50/p95/p99)
+   - Batch processing duration
+
+3. **System Overview**
+   - Unified view of Payment API + Relay Worker
+   - End-to-end latency
+   - Error rates
+   - Total throughput
+
+### **Correlation Example**
+
+When debugging a failed payment:
+
+1. **Grafana:** Detect spike in error rate (dashboard)
+2. **Jaeger:** Find trace with error status (trace_id: abc123)
+3. **Loki:** View logs with same trace_id
+4. **Result:** Complete picture of what failed and why
+
+**Query in Loki:**
+
+```
+{service="payment-api"} |= "abc123"
+```
+
+**Query in Prometheus:**
+
+```promql
+rate(payments_processed_total{status="failed"}[5m])
+```
 
 ## 🎓 Key Learnings
 
@@ -519,6 +631,22 @@ ORDER BY created_at DESC LIMIT 1;
 - Idempotency considerations
 - Graceful shutdown patterns
 - Bounded context separation
+
+### **Observability & OpenTelemetry**
+
+- OpenTelemetry SDK integration (TypeScript + Go)
+- OTLP protocol (gRPC export)
+- Auto-instrumentation patterns (HTTP, Database, Kafka)
+- Custom metrics (Counters, Gauges, Histograms)
+- Custom spans and trace context propagation
+- Distributed tracing across polyglot services
+- Metrics collection with Prometheus
+- Log aggregation with Loki
+- Trace visualization with Jaeger
+- Unified dashboards in Grafana
+- Correlation via trace_id (logs + metrics + traces)
+- Observable gauges with callbacks
+- PromQL query language
 
 ---
 

@@ -5,6 +5,7 @@ import { validate } from './common/config/env.validation';
 import { typeOrmConfig } from './infrastructure/persistence/typeorm/typeorm.config';
 import { PersistenceModule } from './infrastructure/persistence/persistence.module';
 import { HttpModule } from './infrastructure/http/http.module';
+import { TelemetryModule } from './common/telemetry/telemetry.module';
 
 @Module({
   imports: [
@@ -26,6 +27,9 @@ import { HttpModule } from './infrastructure/http/http.module';
 
     // Http Module (Controllers)
     HttpModule,
+
+    // Telemetry Module
+    TelemetryModule,
   ],
 })
 export class AppModule {}
